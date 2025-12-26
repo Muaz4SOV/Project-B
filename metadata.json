@@ -1,0 +1,9 @@
+
+{
+  "name": "AuthNexus SSO Portal",
+  "description": "A high-performance React landing page featuring Auth0 SSO integration, silent authentication, and a Gemini-powered dashboard.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
