@@ -25,6 +25,10 @@ root.render(
       }}
       useRefreshTokens={true}
       cacheLocation="localstorage"
+      // Logout redirect URI - should match Auth0 logout URLs configuration
+      logoutParams={{
+        returnTo: window.location.origin,
+      }}
     >
       <App />
     </Auth0Provider>

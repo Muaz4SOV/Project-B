@@ -17,13 +17,34 @@ const App: React.FC = () => {
   // Use a ref to prevent multiple simultaneous redirect attempts
   const hasAttemptedSilentAuth = useRef(false);
 
-  // Identify errors that mean "Silent Auth is not possible right now"
+  // Identify errors that mean "Silent Auth is not possible right now" - these are expected and should be ignored
   const isSilentAuthFailed = 
     error?.message?.toLowerCase().includes('login required') || 
     error?.message?.toLowerCase().includes('consent required') ||
     error?.message?.toLowerCase().includes('interaction_required') ||
     (error as any)?.error === 'login_required' ||
-    (error as any)?.error === 'consent_required';
+    (error as any)?.error === 'consent_required' ||
+    (error as any)?.error === 'interaction_required';
+
+  // Clean up URL parameters after callback handling (especially for silent auth failures)
+  useEffect(() => {
+    if (!isLoading) {
+      const urlParams = new URLSearchParams(window.location.search);
+      const errorParam = urlParams.get('error');
+      const isCallbackRoute = window.location.pathname === '/callback' || window.location.pathname.endsWith('/callback');
+      
+      // If we have a login_required error on callback route, clean up URL to prevent 404
+      if (isCallbackRoute && errorParam === 'login_required') {
+        // Clean up the URL by redirecting to root without query params
+        // This prevents 404 errors and allows the app to show the landing page
+        const timer = setTimeout(() => {
+          window.history.replaceState({}, '', window.location.origin);
+        }, 500);
+        
+        return () => clearTimeout(timer);
+      }
+    }
+  }, [isLoading]);
 
   useEffect(() => {
     // Logic for Silent SSO:
@@ -34,8 +55,10 @@ const App: React.FC = () => {
     if (!isLoading && !isAuthenticated && !isSilentAuthFailed && !hasAttemptedSilentAuth.current) {
       const urlParams = new URLSearchParams(window.location.search);
       const hasCallbackParams = urlParams.has('error') || urlParams.has('code') || urlParams.has('state');
+      const isCallbackRoute = window.location.pathname === '/callback' || window.location.pathname.endsWith('/callback');
 
-      if (!hasCallbackParams) {
+      // Only attempt silent auth if we're not on callback route and no callback params
+      if (!hasCallbackParams && !isCallbackRoute) {
         console.log("🚀 SSO Handshake: Checking for existing session...");
         hasAttemptedSilentAuth.current = true;
         
@@ -45,13 +68,19 @@ const App: React.FC = () => {
           },
         }).catch(err => {
           console.warn("Silent SSO skip:", err.message);
+          // Reset the flag on error so user can try again if needed
+          hasAttemptedSilentAuth.current = false;
         });
+      } else if (hasCallbackParams && urlParams.get('error') === 'login_required') {
+        // Mark as attempted when we see login_required error to prevent loops
+        hasAttemptedSilentAuth.current = true;
       }
     }
   }, [isLoading, isAuthenticated, isSilentAuthFailed, loginWithRedirect]);
 
   // Handle genuine configuration or network errors (not login/consent issues)
-  if (error && !isSilentAuthFailed) {
+  // Silent auth failures (login_required, consent_required) are expected and should show landing page
+  if (error && !isSilentAuthFailed && !isAuthenticated) {
     return (
       <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4">
         <div className="bg-slate-900 border border-red-500/20 p-8 rounded-3xl max-w-md text-center shadow-2xl shadow-red-500/10">
