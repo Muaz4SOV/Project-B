@@ -26,21 +26,38 @@ const App: React.FC = () => {
     (error as any)?.error === 'consent_required' ||
     (error as any)?.error === 'interaction_required';
 
-  // Clean up URL parameters after callback handling (especially for silent auth failures)
+  // Clean up URL parameters after callback handling (especially for silent auth failures and invalid state)
   useEffect(() => {
     if (!isLoading) {
       const urlParams = new URLSearchParams(window.location.search);
       const errorParam = urlParams.get('error');
+      const errorDescription = urlParams.get('error_description') || '';
       const isCallbackRoute = window.location.pathname === '/callback' || window.location.pathname.endsWith('/callback');
       
       // If we have a login_required error on callback route, clean up URL to prevent 404
       if (isCallbackRoute && errorParam === 'login_required') {
-        // Clean up the URL by redirecting to root without query params
-        // This prevents 404 errors and allows the app to show the landing page
         const timer = setTimeout(() => {
           window.history.replaceState({}, '', window.location.origin);
         }, 500);
+        return () => clearTimeout(timer);
+      }
+      
+      // Handle invalid state errors by cleaning up and allowing retry
+      if (isCallbackRoute && (
+        errorParam === 'invalid_state' || 
+        errorDescription.toLowerCase().includes('invalid state') ||
+        errorDescription.toLowerCase().includes('state mismatch')
+      )) {
+        // Clear Auth0 state from localStorage
+        const auth0Keys = Object.keys(localStorage).filter(key => 
+          key.includes('auth0') || key.includes('@@auth0spajs')
+        );
+        auth0Keys.forEach(key => localStorage.removeItem(key));
         
+        // Clean up URL
+        const timer = setTimeout(() => {
+          window.history.replaceState({}, '', window.location.origin);
+        }, 500);
         return () => clearTimeout(timer);
       }
     }
@@ -78,8 +95,31 @@ const App: React.FC = () => {
     }
   }, [isLoading, isAuthenticated, isSilentAuthFailed, loginWithRedirect]);
 
+  // Handle invalid state errors (common in cross-domain SSO) - these should trigger a clean retry
+  const isInvalidStateError = 
+    error?.message?.toLowerCase().includes('invalid state') ||
+    error?.message?.toLowerCase().includes('state mismatch');
+
+  // Handle retry with cleanup for invalid state errors
+  const handleRetryConnection = () => {
+    // Clear Auth0 related localStorage items to reset state
+    const auth0Keys = Object.keys(localStorage).filter(key => 
+      key.includes('auth0') || key.includes('@@auth0spajs')
+    );
+    auth0Keys.forEach(key => localStorage.removeItem(key));
+    
+    // Clear URL parameters
+    window.history.replaceState({}, '', window.location.origin);
+    
+    // Trigger a fresh login
+    setTimeout(() => {
+      loginWithRedirect();
+    }, 100);
+  };
+
   // Handle genuine configuration or network errors (not login/consent issues)
   // Silent auth failures (login_required, consent_required) are expected and should show landing page
+  // Invalid state errors should show retry button that cleans up and retries
   if (error && !isSilentAuthFailed && !isAuthenticated) {
     return (
       <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4">
@@ -89,14 +129,17 @@ const App: React.FC = () => {
           </div>
           <h2 className="text-white text-xl font-bold mb-2">Auth Connection Error</h2>
           <p className="text-slate-400 mb-8 text-sm leading-relaxed">
-            We couldn't reach the identity provider. Please check your internet or configuration.
+            {isInvalidStateError 
+              ? "Session state mismatch detected. This can happen when switching between different domains. Click below to retry with a fresh login."
+              : "We couldn't reach the identity provider. Please check your internet or configuration."
+            }
             <br/><span className="text-red-400/80 mt-2 block font-mono text-xs">{error.message}</span>
           </p>
           <button 
-            onClick={() => window.location.href = window.location.origin}
+            onClick={handleRetryConnection}
             className="w-full bg-white text-slate-950 hover:bg-slate-200 font-bold py-3 rounded-xl transition-all active:scale-95"
           >
-            Retry Connection
+            {isInvalidStateError ? 'Retry Login' : 'Retry Connection'}
           </button>
         </div>
       </div>
