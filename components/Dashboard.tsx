@@ -20,10 +20,24 @@ export const Dashboard: React.FC = () => {
     fetchGreeting();
   }, [user]);
 
-  const switchToProjectB = () => {
-    const targetPort = window.location.port === '3000' ? '3001' : '3000';
-    // When switching, we just navigate. App.tsx will handle the silent login automatically.
-    window.location.href = `http://localhost:${targetPort}`;
+  const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+  
+  const switchToProjectA = () => {
+    if (isLocalhost) {
+      // Local development: switch between ports
+      const targetPort = window.location.port === '3000' ? '3001' : '3000';
+      window.location.href = `http://localhost:${targetPort}`;
+    } else {
+      // Production/Vercel: navigate to Project A
+      window.location.href = 'https://project-a-git-main-muhammad-muazs-projects-cc9bdaf8.vercel.app/';
+    }
+  };
+
+  const getProjectButtonText = () => {
+    if (isLocalhost) {
+      return `Go to Project ${window.location.port === '3000' ? 'B (3001)' : 'A (3000)'}`;
+    }
+    return 'Go to Project A';
   };
 
   return (
@@ -101,13 +115,13 @@ export const Dashboard: React.FC = () => {
 
           <div className="bg-gradient-to-br from-indigo-600 to-blue-700 rounded-3xl p-8 text-white shadow-xl shadow-indigo-900/20">
             <h3 className="text-lg font-bold mb-2">SSO Switcher</h3>
-            <p className="text-indigo-100 text-sm mb-6">Test the <b>Silent Handshake</b>. By clicking below, we go to another port where the session is picked up automatically.</p>
+            <p className="text-indigo-100 text-sm mb-6">Test the <b>Silent Handshake</b>. By clicking below, we navigate to Project A where the session is picked up automatically.</p>
             <button 
-              onClick={switchToProjectB}
+              onClick={switchToProjectA}
               className="flex items-center gap-2 bg-white/20 hover:bg-white/30 transition px-6 py-2 rounded-xl font-semibold border border-white/20"
             >
               <ExternalLink className="w-4 h-4" />
-              Go to Project {window.location.port === '3000' ? 'B (3001)' : 'A (3000)'}
+              {getProjectButtonText()}
             </button>
           </div>
         </div>
