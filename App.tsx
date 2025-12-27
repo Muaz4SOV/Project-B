@@ -16,6 +16,7 @@ const App: React.FC = () => {
 
   // Use a ref to prevent multiple simultaneous redirect attempts
   const hasAttemptedSilentAuth = useRef(false);
+  const hasHandledInvalidState = useRef(false);
 
   // Identify errors that mean "Silent Auth is not possible right now" - these are expected and should be ignored
   const isSilentAuthFailed = 
@@ -26,35 +27,42 @@ const App: React.FC = () => {
     (error as any)?.error === 'consent_required' ||
     (error as any)?.error === 'interaction_required';
 
-  // Clean up URL parameters after callback handling (especially for silent auth failures and invalid state)
+  // Identify invalid state errors (should be automatically handled, not shown as error)
+  const isInvalidStateError = 
+    error?.message?.toLowerCase().includes('invalid state') ||
+    error?.message?.toLowerCase().includes('state mismatch');
+
+  // Automatically handle invalid state errors - clean up and retry login
+  useEffect(() => {
+    if (isInvalidStateError && !hasHandledInvalidState.current && !isLoading) {
+      hasHandledInvalidState.current = true;
+      
+      // Clear Auth0 state from localStorage
+      const auth0Keys = Object.keys(localStorage).filter(key => 
+        key.includes('auth0') || key.includes('@@auth0spajs')
+      );
+      auth0Keys.forEach(key => localStorage.removeItem(key));
+      
+      // Clean up URL parameters
+      window.history.replaceState({}, '', window.location.origin);
+      
+      // Trigger a fresh login immediately (redirect happens right away)
+      loginWithRedirect().catch(() => {
+        // If redirect fails, reset flag to allow retry
+        hasHandledInvalidState.current = false;
+      });
+    }
+  }, [isInvalidStateError, isLoading, loginWithRedirect]);
+
+  // Clean up URL parameters after callback handling (especially for silent auth failures)
   useEffect(() => {
     if (!isLoading) {
       const urlParams = new URLSearchParams(window.location.search);
       const errorParam = urlParams.get('error');
-      const errorDescription = urlParams.get('error_description') || '';
       const isCallbackRoute = window.location.pathname === '/callback' || window.location.pathname.endsWith('/callback');
       
       // If we have a login_required error on callback route, clean up URL to prevent 404
       if (isCallbackRoute && errorParam === 'login_required') {
-        const timer = setTimeout(() => {
-          window.history.replaceState({}, '', window.location.origin);
-        }, 500);
-        return () => clearTimeout(timer);
-      }
-      
-      // Handle invalid state errors by cleaning up and allowing retry
-      if (isCallbackRoute && (
-        errorParam === 'invalid_state' || 
-        errorDescription.toLowerCase().includes('invalid state') ||
-        errorDescription.toLowerCase().includes('state mismatch')
-      )) {
-        // Clear Auth0 state from localStorage
-        const auth0Keys = Object.keys(localStorage).filter(key => 
-          key.includes('auth0') || key.includes('@@auth0spajs')
-        );
-        auth0Keys.forEach(key => localStorage.removeItem(key));
-        
-        // Clean up URL
         const timer = setTimeout(() => {
           window.history.replaceState({}, '', window.location.origin);
         }, 500);
@@ -95,12 +103,7 @@ const App: React.FC = () => {
     }
   }, [isLoading, isAuthenticated, isSilentAuthFailed, loginWithRedirect]);
 
-  // Handle invalid state errors (common in cross-domain SSO) - these should trigger a clean retry
-  const isInvalidStateError = 
-    error?.message?.toLowerCase().includes('invalid state') ||
-    error?.message?.toLowerCase().includes('state mismatch');
-
-  // Handle retry with cleanup for invalid state errors
+  // Handle retry with cleanup for genuine errors
   const handleRetryConnection = () => {
     // Clear Auth0 related localStorage items to reset state
     const auth0Keys = Object.keys(localStorage).filter(key => 
@@ -117,10 +120,10 @@ const App: React.FC = () => {
     }, 100);
   };
 
-  // Handle genuine configuration or network errors (not login/consent issues)
+  // Handle genuine configuration or network errors (not login/consent issues or invalid state)
   // Silent auth failures (login_required, consent_required) are expected and should show landing page
-  // Invalid state errors should show retry button that cleans up and retries
-  if (error && !isSilentAuthFailed && !isAuthenticated) {
+  // Invalid state errors are automatically handled and shouldn't show error screen
+  if (error && !isSilentAuthFailed && !isInvalidStateError && !isAuthenticated) {
     return (
       <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4">
         <div className="bg-slate-900 border border-red-500/20 p-8 rounded-3xl max-w-md text-center shadow-2xl shadow-red-500/10">
@@ -129,25 +132,22 @@ const App: React.FC = () => {
           </div>
           <h2 className="text-white text-xl font-bold mb-2">Auth Connection Error</h2>
           <p className="text-slate-400 mb-8 text-sm leading-relaxed">
-            {isInvalidStateError 
-              ? "Session state mismatch detected. This can happen when switching between different domains. Click below to retry with a fresh login."
-              : "We couldn't reach the identity provider. Please check your internet or configuration."
-            }
+            We couldn't reach the identity provider. Please check your internet or configuration.
             <br/><span className="text-red-400/80 mt-2 block font-mono text-xs">{error.message}</span>
           </p>
           <button 
             onClick={handleRetryConnection}
             className="w-full bg-white text-slate-950 hover:bg-slate-200 font-bold py-3 rounded-xl transition-all active:scale-95"
           >
-            {isInvalidStateError ? 'Retry Login' : 'Retry Connection'}
+            Retry Connection
           </button>
         </div>
       </div>
     );
   }
 
-  // Elegant loading screen during the silent handshake
-  if (isLoading) {
+  // Show loading screen during auth handshake or when handling invalid state
+  if (isLoading || (isInvalidStateError && hasHandledInvalidState.current)) {
     return (
       <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center space-y-6">
         <div className="relative">
@@ -156,7 +156,9 @@ const App: React.FC = () => {
         </div>
         <div className="text-center space-y-2">
           <p className="text-white font-bold tracking-widest uppercase text-xs opacity-50">Enterprise Auth</p>
-          <p className="text-slate-400 font-medium animate-pulse italic">Synchronizing your session...</p>
+          <p className="text-slate-400 font-medium animate-pulse italic">
+            {isInvalidStateError ? 'Resetting session...' : 'Synchronizing your session...'}
+          </p>
         </div>
       </div>
     );
