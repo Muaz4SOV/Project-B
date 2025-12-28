@@ -55,13 +55,33 @@ export const useLogoutSignalR = () => {
       return;
     }
 
-    // Clean up existing connection if any
+    // Note: SignalR should work on all routes including /callback
+    // We don't skip callback route because logout can happen while user is on any route
+
+    // Check if connection already exists and is connected - reuse it to avoid disconnections
     if (connectionRef.current) {
-      connectionRef.current.stop().catch(() => {});
-      connectionRef.current = null;
+      const connectionState = connectionRef.current.state;
+      const currentPath = window.location.pathname;
+      
+      if (connectionState === 'Connected') {
+        // Connection already exists and is connected - just ensure we're in the group
+        console.log(`✅ SignalR connection already exists and connected on route: ${currentPath}, verifying group membership...`);
+        joinGroupWithRetry(connectionRef.current, user.sub, 0);
+        return; // Don't create new connection - reuse existing one
+      } else if (connectionState === 'Connecting' || connectionState === 'Reconnecting') {
+        // Connection is in progress - wait for it to complete instead of recreating
+        console.log(`⏳ SignalR connection in progress (${connectionState}) on route: ${currentPath}, skipping recreation...`);
+        return;
+      } else {
+        // Connection exists but is disconnected or in wrong state - clean it up
+        console.log(`🧹 Cleaning up existing connection (state: ${connectionState}) on route: ${currentPath}`);
+        connectionRef.current.stop().catch(() => {});
+        connectionRef.current = null;
+      }
     }
 
-    console.log('🔌 Initializing SignalR connection for user:', user.sub);
+    const currentPath = window.location.pathname;
+    console.log(`🔌 Initializing SignalR connection for user: ${user.sub} on route: ${currentPath}`);
 
     // Create SignalR connection
     const connection: HubConnection = new HubConnectionBuilder()
