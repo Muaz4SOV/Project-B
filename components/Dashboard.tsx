@@ -5,9 +5,31 @@ import { LogOut, LayoutDashboard, User, Shield, Sparkles, Loader2, ExternalLink 
 import { getGeminiGreeting } from '../services/geminiService';
 
 export const Dashboard: React.FC = () => {
-  const { user, logout } = useAuth0();
+  const { user } = useAuth0();
   const [aiGreeting, setAiGreeting] = useState<string>('Initializing secure session...');
   const [isLoadingAi, setIsLoadingAi] = useState(true);
+
+  // Auth0 credentials
+  const domain = "dev-4v4hx3vrjxrwitlc.us.auth0.com";
+  const clientId = "vpnqpt3AOLZM5dgt3i84LcMTJUNeANzM";
+
+  // Federated logout function - clears SSO session for all apps
+  const handleLogout = () => {
+    // Clear local storage first to remove local tokens
+    const auth0Keys = Object.keys(localStorage).filter(key => 
+      key.includes('auth0') || key.includes('@@auth0spajs')
+    );
+    auth0Keys.forEach(key => localStorage.removeItem(key));
+    
+    // Construct Auth0 logout URL with federated logout parameter
+    // The 'federated' parameter ensures SSO session is cleared for ALL apps
+    const returnTo = encodeURIComponent(window.location.origin);
+    const logoutUrl = `https://${domain}/v2/logout?client_id=${clientId}&returnTo=${returnTo}&federated`;
+    
+    // Redirect to Auth0 logout endpoint - this clears SSO session server-side
+    // After logout, Auth0 redirects back to returnTo URL
+    window.location.href = logoutUrl;
+  };
 
   useEffect(() => {
     const fetchGreeting = async () => {
@@ -58,17 +80,7 @@ export const Dashboard: React.FC = () => {
 
         <div className="pt-8 border-t border-slate-800">
           <button 
-            onClick={() => {
-              // Federated logout - clears SSO session for all apps
-              // By default, Auth0 logout clears the SSO session which logs out from all apps
-              logout({ 
-                logoutParams: { 
-                  returnTo: window.location.origin
-                }
-                // Note: localOnly is false by default, so it will logout from Auth0 server
-                // which clears the SSO session and logs out from all connected apps
-              });
-            }}
+            onClick={handleLogout}
             className="flex items-center gap-3 w-full px-4 py-3 text-slate-400 hover:text-white hover:bg-red-500/10 rounded-xl transition"
           >
             <LogOut className="w-5 h-5" />
