@@ -5,6 +5,7 @@ import { Loader2, AlertCircle } from 'lucide-react';
 import { LandingPage } from './components/LandingPage';
 import { Dashboard } from './components/Dashboard';
 import { Layout } from './components/Layout';
+import { useLogoutSignalR } from './hooks/useLogoutSignalR';
 
 const App: React.FC = () => {
   const { 
@@ -14,6 +15,9 @@ const App: React.FC = () => {
     loginWithRedirect,
     getAccessTokenSilently
   } = useAuth0();
+
+  // SignalR logout listener - real-time logout notifications
+  useLogoutSignalR();
 
   // Use a ref to prevent multiple simultaneous redirect attempts
   const hasAttemptedSilentAuth = useRef(false);
