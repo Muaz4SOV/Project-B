@@ -7,12 +7,61 @@ const BACKEND_URL = 'https://dev.dynamicpricingbuilder.com';
 export const useLogoutSignalR = () => {
   const { user, isAuthenticated, logout } = useAuth0();
   const connectionRef = useRef<HubConnection | null>(null);
+  const isJoiningGroupRef = useRef(false);
+  const joinRetryCountRef = useRef(0);
+
+  // Join group function with retry logic
+  const joinGroupWithRetry = async (connection: HubConnection, userId: string, retryCount = 0): Promise<void> => {
+    if (isJoiningGroupRef.current) {
+      console.log('⏳ Group join already in progress, skipping...');
+      return;
+    }
+
+    if (retryCount >= 5) {
+      console.error('❌ Max retries reached for joining group');
+      return;
+    }
+
+    isJoiningGroupRef.current = true;
+
+    try {
+      await connection.invoke('JoinLogoutGroup', userId);
+      console.log(`✅ Joined logout group for user: ${userId}`);
+      joinRetryCountRef.current = 0;
+      isJoiningGroupRef.current = false;
+    } catch (err) {
+      console.error(`❌ Error joining logout group (attempt ${retryCount + 1}/5):`, err);
+      isJoiningGroupRef.current = false;
+      
+      // Retry after delay
+      if (retryCount < 4) {
+        const delay = Math.min(1000 * Math.pow(2, retryCount), 5000); // 1s, 2s, 4s, 5s, 5s
+        console.log(`🔄 Retrying group join in ${delay}ms...`);
+        setTimeout(() => {
+          joinGroupWithRetry(connection, userId, retryCount + 1);
+        }, delay);
+      }
+    }
+  };
 
   useEffect(() => {
     // Only connect if user is authenticated
     if (!isAuthenticated || !user?.sub) {
+      // Clean up connection if user is not authenticated
+      if (connectionRef.current) {
+        connectionRef.current.stop().catch(() => {});
+        connectionRef.current = null;
+      }
       return;
     }
+
+    // Clean up existing connection if any
+    if (connectionRef.current) {
+      connectionRef.current.stop().catch(() => {});
+      connectionRef.current = null;
+    }
+
+    console.log('🔌 Initializing SignalR connection for user:', user.sub);
 
     // Create SignalR connection
     const connection: HubConnection = new HubConnectionBuilder()
@@ -30,26 +79,7 @@ export const useLogoutSignalR = () => {
 
     connectionRef.current = connection;
 
-    // Start connection
-    connection.start()
-      .then(() => {
-        console.log('✅ SignalR Connected to Logout Hub');
-
-        // Join user-specific group
-        if (user.sub) {
-          connection.invoke('JoinLogoutGroup', user.sub)
-            .then(() => {
-              console.log(`✅ Joined logout group for user: ${user.sub}`);
-            })
-            .catch(err => {
-              console.error('❌ Error joining logout group:', err);
-            });
-        }
-      })
-      .catch(err => {
-        console.error('❌ SignalR Connection Error:', err);
-      });
-
+    // Set up event handlers BEFORE starting connection
     // Listen for logout event
     connection.on('UserLoggedOut', async (data: { 
       UserId: string; 
@@ -93,23 +123,73 @@ export const useLogoutSignalR = () => {
           },
           localOnly: false
         });
+      } else {
+        console.log('ℹ️ Logout event received for different user:', data.UserId);
       }
     });
+
+    // Start connection
+    connection.start()
+      .then(() => {
+        console.log('✅ SignalR Connected to Logout Hub');
+        
+        // Join user-specific group with retry
+        if (user.sub && connection.state === 'Connected') {
+          joinGroupWithRetry(connection, user.sub, 0);
+        } else {
+          console.warn('⚠️ Connection state is not Connected:', connection.state);
+          // Try to join after a short delay
+          setTimeout(() => {
+            if (connection.state === 'Connected' && user.sub) {
+              joinGroupWithRetry(connection, user.sub, 0);
+            }
+          }, 500);
+        }
+      })
+      .catch(err => {
+        console.error('❌ SignalR Connection Error:', err);
+        // Retry connection after delay
+        setTimeout(() => {
+          if (isAuthenticated && user?.sub) {
+            connection.start()
+              .then(() => {
+                console.log('✅ SignalR Reconnected after error');
+                joinGroupWithRetry(connection, user.sub, 0);
+              })
+              .catch(retryErr => {
+                console.error('❌ SignalR Reconnection failed:', retryErr);
+              });
+          }
+        }, 3000);
+      });
 
     // Handle connection events
     connection.onreconnecting((error) => {
       console.log('🔄 SignalR Reconnecting...', error);
+      isJoiningGroupRef.current = false; // Reset join flag on reconnect
     });
 
     connection.onreconnected((connectionId) => {
       console.log('✅ SignalR Reconnected. Connection ID:', connectionId);
       
-      // Rejoin group after reconnection
-      if (user?.sub) {
-        connection.invoke('JoinLogoutGroup', user.sub)
-          .catch(err => console.error('Error rejoining group:', err));
+      // Rejoin group after reconnection with retry
+      if (user?.sub && connection.state === 'Connected') {
+        console.log('🔄 Rejoining logout group after reconnection...');
+        joinGroupWithRetry(connection, user.sub, 0);
       }
     });
+
+    // Periodic check to ensure we're in the group (every 30 seconds)
+    const groupCheckInterval = setInterval(() => {
+      if (connection.state === 'Connected' && user?.sub && !isJoiningGroupRef.current) {
+        // Periodically verify we're still in the group
+        // This helps catch cases where group join might have failed silently
+        console.log('🔍 Periodic group membership check...');
+        joinGroupWithRetry(connection, user.sub, 0);
+      } else {
+        console.log(`⚠️ Group check skipped - State: ${connection.state}, User: ${user?.sub}, Joining: ${isJoiningGroupRef.current}`);
+      }
+    }, 30000); // Check every 30 seconds
 
     connection.onclose((error) => {
       console.log('❌ SignalR Connection Closed', error);
@@ -117,9 +197,12 @@ export const useLogoutSignalR = () => {
 
     // Cleanup on unmount
     return () => {
+      clearInterval(groupCheckInterval);
+      isJoiningGroupRef.current = false;
+      
       if (connectionRef.current) {
         // Leave group before disconnecting
-        if (user?.sub) {
+        if (user?.sub && connectionRef.current.state === 'Connected') {
           connectionRef.current.invoke('LeaveLogoutGroup', user.sub)
             .catch(err => console.error('Error leaving group:', err));
         }
@@ -128,9 +211,11 @@ export const useLogoutSignalR = () => {
         connectionRef.current.stop()
           .then(() => console.log('✅ SignalR Connection Stopped'))
           .catch(err => console.error('Error stopping connection:', err));
+        
+        connectionRef.current = null;
       }
     };
-  }, [isAuthenticated, user, logout]);
+  }, [isAuthenticated, user?.sub, logout]);
 
   return connectionRef.current;
 };
