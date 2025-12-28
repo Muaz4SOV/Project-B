@@ -11,7 +11,8 @@ const App: React.FC = () => {
     isAuthenticated, 
     isLoading, 
     error, 
-    loginWithRedirect 
+    loginWithRedirect,
+    getAccessTokenSilently
   } = useAuth0();
 
   // Use a ref to prevent multiple simultaneous redirect attempts
@@ -71,6 +72,166 @@ const App: React.FC = () => {
     }
   }, [isLoading]);
 
+  // Check for logout timestamp before attempting silent login
+  const checkLogoutTimestamp = (): boolean => {
+    // Check localStorage (works for same domain tabs)
+    const logoutTimestamp = localStorage.getItem('auth0_logout_timestamp');
+    
+    // Check cookie (works across different domains if set properly)
+    const logoutCookie = document.cookie
+      .split('; ')
+      .find(row => row.startsWith('auth0_logout='));
+    
+    const cookieLogoutTime = logoutCookie ? parseInt(logoutCookie.split('=')[1]) : null;
+    const storageLogoutTime = logoutTimestamp ? parseInt(logoutTimestamp) : null;
+    
+    // Get the most recent logout time from either source
+    let logoutTime: number | null = null;
+    if (storageLogoutTime) logoutTime = storageLogoutTime;
+    if (cookieLogoutTime && (!logoutTime || cookieLogoutTime > logoutTime)) {
+      logoutTime = cookieLogoutTime;
+    }
+    
+    if (logoutTime) {
+      const now = Date.now();
+      const timeDiff = now - logoutTime;
+      
+      // If logout happened in last 10 minutes, skip silent login
+      if (timeDiff < 10 * 60 * 1000) {
+        console.log("Logout detected - skipping silent login");
+        return true;
+      }
+    }
+    
+    return false;
+  };
+
+  // Session validation - checks if Auth0 session is still valid (for authenticated users)
+  useEffect(() => {
+    if (!isAuthenticated || isLoading) {
+      return;
+    }
+
+    const urlParams = new URLSearchParams(window.location.search);
+    const isCallbackRoute = window.location.pathname === '/callback' || window.location.pathname.endsWith('/callback');
+    
+    if (isCallbackRoute) {
+      return;
+    }
+
+    // Check for logout timestamp from another tab/window/app
+    const checkLogoutTimestampForSession = (): boolean => {
+      const logoutTimestamp = localStorage.getItem('auth0_logout_timestamp');
+      const logoutCookie = document.cookie
+        .split('; ')
+        .find(row => row.startsWith('auth0_logout='));
+      
+      const cookieLogoutTime = logoutCookie ? parseInt(logoutCookie.split('=')[1]) : null;
+      const storageLogoutTime = logoutTimestamp ? parseInt(logoutTimestamp) : null;
+      
+      let logoutTime: number | null = null;
+      if (storageLogoutTime) logoutTime = storageLogoutTime;
+      if (cookieLogoutTime && (!logoutTime || cookieLogoutTime > logoutTime)) {
+        logoutTime = cookieLogoutTime;
+      }
+      
+      if (logoutTime) {
+        const lastCheck = localStorage.getItem('auth0_last_session_check');
+        
+        // If logout happened after our last check, we need to logout
+        if (!lastCheck || parseInt(lastCheck) < logoutTime) {
+          console.log("Logout detected from another app - logging out");
+          return true;
+        }
+      }
+      return false;
+    };
+
+    // Perform logout cleanup
+    const performLogout = () => {
+      // Clear all Auth0 cache
+      Object.keys(localStorage).forEach(key => {
+        if (key.includes('auth0') || 
+            key.includes('@@auth0spajs@@') || 
+            key.toLowerCase().includes('auth')) {
+          localStorage.removeItem(key);
+        }
+      });
+      
+      Object.keys(sessionStorage).forEach(key => {
+        if (key.startsWith('ss_check_') || 
+            key.toLowerCase().includes('auth')) {
+          sessionStorage.removeItem(key);
+        }
+      });
+      
+      // Reload page to trigger logout state
+      window.location.reload();
+    };
+
+    // Validate session function
+    const validateSession = async () => {
+      if (checkLogoutTimestampForSession()) {
+        performLogout();
+        return;
+      }
+      
+      localStorage.setItem('auth0_last_session_check', Date.now().toString());
+      
+      try {
+        // Force fresh token check - if session cleared, this will fail
+        await getAccessTokenSilently({
+          cacheMode: 'off',
+          timeoutInSeconds: 2,
+          authorizationParams: {
+            prompt: 'none'
+          }
+        });
+      } catch (error: any) {
+        // Session invalid - logout
+        if (error?.error === 'login_required' || 
+            error?.error === 'invalid_grant' ||
+            error?.message?.includes('login_required')) {
+          console.log("Session cleared - performing logout");
+          performLogout();
+        }
+      }
+    };
+
+    // Check every 3 seconds
+    const interval = setInterval(() => {
+      if (!checkLogoutTimestampForSession()) {
+        validateSession();
+      } else {
+        performLogout();
+      }
+    }, 3000);
+
+    // Also check on visibility/focus
+    const handleVisibilityChange = () => {
+      if (!document.hidden && isAuthenticated) {
+        validateSession();
+      }
+    };
+
+    window.addEventListener('visibilitychange', handleVisibilityChange);
+    
+    // Listen for storage events (cross-tab logout detection)
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === 'auth0_logout_timestamp' && e.newValue) {
+        performLogout();
+      }
+    };
+    
+    window.addEventListener('storage', handleStorageChange);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('storage', handleStorageChange);
+    };
+  }, [isAuthenticated, isLoading, getAccessTokenSilently]);
+
   useEffect(() => {
     // Logic for Silent SSO:
     // 1. User is not logged in.
@@ -78,6 +239,11 @@ const App: React.FC = () => {
     // 3. We haven't already failed a silent attempt (prevents infinite loops).
     // 4. We haven't just been redirected back with a result (?code= or ?error=).
     if (!isLoading && !isAuthenticated && !isSilentAuthFailed && !hasAttemptedSilentAuth.current) {
+      // Check logout timestamp before attempting silent login
+      if (checkLogoutTimestamp()) {
+        return;
+      }
+
       const urlParams = new URLSearchParams(window.location.search);
       const hasCallbackParams = urlParams.has('error') || urlParams.has('code') || urlParams.has('state');
       const isCallbackRoute = window.location.pathname === '/callback' || window.location.pathname.endsWith('/callback');

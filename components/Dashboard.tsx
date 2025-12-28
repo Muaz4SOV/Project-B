@@ -15,19 +15,52 @@ export const Dashboard: React.FC = () => {
 
   // Federated logout function - clears SSO session for all apps
   const handleLogout = () => {
-    // Clear local storage first to remove local tokens
-    const auth0Keys = Object.keys(localStorage).filter(key => 
-      key.includes('auth0') || key.includes('@@auth0spajs')
-    );
-    auth0Keys.forEach(key => localStorage.removeItem(key));
+    const returnTo = window.location.origin;
     
-    // Construct Auth0 logout URL with federated logout parameter
-    // The 'federated' parameter ensures SSO session is cleared for ALL apps
-    const returnTo = encodeURIComponent(window.location.origin);
-    const logoutUrl = `https://${domain}/v2/logout?client_id=${clientId}&returnTo=${returnTo}&federated`;
+    // Set logout timestamp FIRST - this helps detect logout across tabs/domains
+    const logoutTime = Date.now().toString();
+    localStorage.setItem('auth0_logout_timestamp', logoutTime);
     
-    // Redirect to Auth0 logout endpoint - this clears SSO session server-side
-    // After logout, Auth0 redirects back to returnTo URL
+    // Set logout flag in cookie (helps with cross-domain detection)
+    // Note: For cross-domain cookies, you need SameSite=None and Secure
+    const cookieExpiry = new Date(Date.now() + 600000); // 10 minutes
+    document.cookie = `auth0_logout=${logoutTime}; path=/; expires=${cookieExpiry.toUTCString()}; SameSite=Lax`;
+    
+    // Clear ALL Auth0 cache from localStorage (aggressive cleanup)
+    const keysToRemove: string[] = [];
+    Object.keys(localStorage).forEach(key => {
+      if (key.includes('auth0') || 
+          key.includes('@@auth0spajs@@') || 
+          key.toLowerCase().includes('auth') ||
+          key.includes(clientId) ||
+          key.includes(domain.replace(/\./g, '_'))) {
+        keysToRemove.push(key);
+      }
+    });
+    keysToRemove.forEach(key => localStorage.removeItem(key));
+    
+    // Clear ALL session storage flags and data
+    const sessionKeysToRemove: string[] = [];
+    Object.keys(sessionStorage).forEach(key => {
+      if (key.startsWith('ss_check_') || 
+          key.toLowerCase().includes('auth') ||
+          key.includes(clientId)) {
+        sessionKeysToRemove.push(key);
+      }
+    });
+    sessionKeysToRemove.forEach(key => sessionStorage.removeItem(key));
+    
+    // Clear Auth0 SDK's local cache manually (since localOnly option may not be available)
+    // The actual logout will happen via the redirect below
+    
+    // Immediately redirect to Auth0 logout endpoint for federated logout
+    // The 'federated' parameter ensures Auth0 session is cleared server-side
+    const logoutUrl = `https://${domain}/v2/logout?` +
+      `client_id=${clientId}&` +
+      `returnTo=${encodeURIComponent(returnTo)}&` +
+      `federated`; // CRITICAL: This clears Auth0 session server-side
+    
+    // Redirect immediately to logout endpoint
     window.location.href = logoutUrl;
   };
 
