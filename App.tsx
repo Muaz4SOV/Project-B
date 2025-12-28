@@ -322,6 +322,18 @@ const App: React.FC = () => {
     }
   }, [isLoading, isAuthenticated, loginWithRedirect]);
 
+  // Redirect from /callback to root if authenticated
+  // IMPORTANT: This hook must be BEFORE any conditional returns to maintain hook order
+  useEffect(() => {
+    if (isAuthenticated && !isLoading) {
+      const isCallbackRoute = window.location.pathname === '/callback' || window.location.pathname.endsWith('/callback');
+      if (isCallbackRoute) {
+        // User is authenticated and on callback route - redirect to root
+        window.history.replaceState({}, '', '/');
+      }
+    }
+  }, [isAuthenticated, isLoading]);
+
   // Handle retry with cleanup for genuine errors
   const handleRetryConnection = () => {
     // Clear Auth0 related localStorage items to reset state
@@ -385,17 +397,6 @@ const App: React.FC = () => {
       </div>
     );
   }
-
-  // Redirect from /callback to root if authenticated
-  useEffect(() => {
-    if (isAuthenticated && !isLoading) {
-      const isCallbackRoute = window.location.pathname === '/callback' || window.location.pathname.endsWith('/callback');
-      if (isCallbackRoute) {
-        // User is authenticated and on callback route - redirect to root
-        window.history.replaceState({}, '', '/');
-      }
-    }
-  }, [isAuthenticated, isLoading]);
 
   // After loading completes and silent auth attempted:
   // - If authenticated: show Dashboard
