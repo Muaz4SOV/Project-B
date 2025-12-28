@@ -23,8 +23,7 @@ export const Dashboard: React.FC = () => {
     
     // Set logout flag in cookie (helps with cross-domain detection)
     // Note: For cross-domain cookies, you need SameSite=None and Secure
-    const cookieExpiry = new Date(Date.now() + 600000); // 10 minutes
-    document.cookie = `auth0_logout=${logoutTime}; path=/; expires=${cookieExpiry.toUTCString()}; SameSite=Lax`;
+    document.cookie = `auth0_logout=${logoutTime}; path=/; max-age=600; SameSite=Lax`;
     
     // Clear ALL Auth0 cache from localStorage (aggressive cleanup)
     const keysToRemove: string[] = [];

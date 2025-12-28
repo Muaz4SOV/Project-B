@@ -106,7 +106,10 @@ const App: React.FC = () => {
     return false;
   };
 
-  // Session validation - checks if Auth0 session is still valid (for authenticated users)
+  // ========================================
+  // AGGRESSIVE SESSION VALIDATION
+  // Checks Auth0 session every 2 seconds using userinfo endpoint
+  // ========================================
   useEffect(() => {
     if (!isAuthenticated || isLoading) {
       return;
@@ -118,6 +121,8 @@ const App: React.FC = () => {
     if (isCallbackRoute) {
       return;
     }
+
+    const auth0Domain = "dev-4v4hx3vrjxrwitlc.us.auth0.com";
 
     // Check for logout timestamp from another tab/window/app
     const checkLogoutTimestampForSession = (): boolean => {
@@ -169,65 +174,109 @@ const App: React.FC = () => {
       window.location.reload();
     };
 
-    // Validate session function
+    // Validate session by calling Auth0 userinfo endpoint
     const validateSession = async () => {
       if (checkLogoutTimestampForSession()) {
         performLogout();
         return;
       }
-      
+
       localStorage.setItem('auth0_last_session_check', Date.now().toString());
-      
+
       try {
-        // Force fresh token check - if session cleared, this will fail
-        await getAccessTokenSilently({
-          cacheMode: 'off',
+        // Get fresh token (forces Auth0 to verify session)
+        const token = await getAccessTokenSilently({
+          cacheMode: 'off', // NO cache - forces fresh check
           timeoutInSeconds: 2,
           authorizationParams: {
             prompt: 'none'
           }
         });
+
+        // Verify token by calling Auth0 userinfo endpoint
+        // If federated logout cleared session, this will fail
+        const userInfoResponse = await fetch(`https://${auth0Domain}/userinfo`, {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          },
+          cache: 'no-store'
+        });
+
+        if (!userInfoResponse.ok) {
+          // Session invalid - logout
+          console.log("Userinfo call failed - Auth0 session invalid", userInfoResponse.status);
+          performLogout();
+          return;
+        }
+
       } catch (error: any) {
         // Session invalid - logout
+        console.log("Session validation failed - Auth0 session invalid", error);
+        
         if (error?.error === 'login_required' || 
             error?.error === 'invalid_grant' ||
-            error?.message?.includes('login_required')) {
-          console.log("Session cleared - performing logout");
+            error?.error === 'unauthorized') {
           performLogout();
+          return;
+        }
+        
+        if (checkLogoutTimestampForSession()) {
+          performLogout();
+          return;
         }
       }
     };
 
-    // Check every 3 seconds
-    const interval = setInterval(() => {
-      if (!checkLogoutTimestampForSession()) {
-        validateSession();
-      } else {
-        performLogout();
-      }
-    }, 3000);
-
-    // Also check on visibility/focus
+    // Event handlers
     const handleVisibilityChange = () => {
       if (!document.hidden && isAuthenticated) {
         validateSession();
       }
     };
 
-    window.addEventListener('visibilitychange', handleVisibilityChange);
-    
-    // Listen for storage events (cross-tab logout detection)
+    const handleFocus = () => {
+      if (isAuthenticated) {
+        validateSession();
+      }
+    };
+
     const handleStorageChange = (e: StorageEvent) => {
       if (e.key === 'auth0_logout_timestamp' && e.newValue) {
         performLogout();
       }
     };
+
+    // Immediate validation
+    if (checkLogoutTimestampForSession()) {
+      performLogout();
+      return;
+    }
+
+    // Start aggressive validation
+    validateSession(); // Immediate check
+    const initialTimer = setTimeout(validateSession, 500);
     
+    // Validate every 2 seconds (AGGRESSIVE)
+    const interval = setInterval(() => {
+      if (!checkLogoutTimestampForSession()) {
+        validateSession();
+      } else {
+        performLogout();
+      }
+    }, 2000); // Changed from 3000 to 2000 for aggressive checking
+
+    // Event listeners
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('focus', handleFocus);
     window.addEventListener('storage', handleStorageChange);
 
     return () => {
+      clearTimeout(initialTimer);
       clearInterval(interval);
-      window.removeEventListener('visibilitychange', handleVisibilityChange);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', handleFocus);
       window.removeEventListener('storage', handleStorageChange);
     };
   }, [isAuthenticated, isLoading, getAccessTokenSilently]);
