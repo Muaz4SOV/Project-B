@@ -58,7 +58,17 @@ export const Dashboard: React.FC = () => {
 
         <div className="pt-8 border-t border-slate-800">
           <button 
-            onClick={() => logout({ logoutParams: { returnTo: window.location.origin } })}
+            onClick={() => {
+              // Federated logout - clears SSO session for all apps
+              // By default, Auth0 logout clears the SSO session which logs out from all apps
+              logout({ 
+                logoutParams: { 
+                  returnTo: window.location.origin
+                }
+                // Note: localOnly is false by default, so it will logout from Auth0 server
+                // which clears the SSO session and logs out from all connected apps
+              });
+            }}
             className="flex items-center gap-3 w-full px-4 py-3 text-slate-400 hover:text-white hover:bg-red-500/10 rounded-xl transition"
           >
             <LogOut className="w-5 h-5" />
