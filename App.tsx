@@ -386,6 +386,17 @@ const App: React.FC = () => {
     );
   }
 
+  // Redirect from /callback to root if authenticated
+  useEffect(() => {
+    if (isAuthenticated && !isLoading) {
+      const isCallbackRoute = window.location.pathname === '/callback' || window.location.pathname.endsWith('/callback');
+      if (isCallbackRoute) {
+        // User is authenticated and on callback route - redirect to root
+        window.history.replaceState({}, '', '/');
+      }
+    }
+  }, [isAuthenticated, isLoading]);
+
   // After loading completes and silent auth attempted:
   // - If authenticated: show Dashboard
   // - If not authenticated: show LandingPage (silent auth failed or not attempted)
