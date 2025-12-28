@@ -1,7 +1,7 @@
 
 import React from 'react';
 import { useAuth0 } from '@auth0/auth0-react';
-import { LogIn, ShieldCheck, Zap, Globe } from 'lucide-react';
+import { LogIn, ShieldCheck } from 'lucide-react';
 
 export const LandingPage: React.FC = () => {
   const { loginWithRedirect } = useAuth0();
@@ -30,49 +30,19 @@ export const LandingPage: React.FC = () => {
           The ultimate SSO portal for your multi-app ecosystem. Log in once and stay authenticated across all linked projects without ever seeing a login screen again.
         </p>
 
-        <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
+        <div className="flex items-center justify-center">
           <button
             onClick={() => loginWithRedirect()}
-            className="group relative flex items-center justify-center w-full sm:w-auto px-8 py-4 text-lg font-bold text-white transition-all bg-indigo-600 rounded-xl hover:bg-indigo-500 active:scale-95 shadow-[0_0_20px_rgba(79,70,229,0.4)]"
+            className="group relative flex items-center justify-center px-8 py-4 text-lg font-bold text-white transition-all bg-indigo-600 rounded-xl hover:bg-indigo-500 active:scale-95 shadow-[0_0_20px_rgba(79,70,229,0.4)]"
           >
             <LogIn className="w-5 h-5 mr-3 transition-transform group-hover:translate-x-1" />
-            Sign In with Auth0
-          </button>
-          
-          <button className="flex items-center justify-center w-full sm:w-auto px-8 py-4 text-lg font-semibold text-slate-300 transition border border-slate-800 rounded-xl hover:bg-slate-900">
-            View Documentation
+            Sign In with SSO
           </button>
         </div>
       </div>
 
-      {/* Features Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mt-24 max-w-6xl w-full">
-        <FeatureCard 
-          icon={<Zap className="w-6 h-6 text-yellow-400" />}
-          title="Silent SSO"
-          description="Log into one app, get logged into all. Zero friction, maximum productivity."
-        />
-        <FeatureCard 
-          icon={<Globe className="w-6 h-6 text-blue-400" />}
-          title="Cross-Domain"
-          description="Works seamlessly across multiple domains within your enterprise tenant."
-        />
-        <FeatureCard 
-          icon={<ShieldCheck className="w-6 h-6 text-green-400" />}
-          title="Secure Identity"
-          description="Bank-grade security powered by Auth0 protocols and OIDC standards."
-        />
-      </div>
     </div>
   );
 };
 
-const FeatureCard: React.FC<{ icon: React.ReactNode, title: string, description: string }> = ({ icon, title, description }) => (
-  <div className="p-8 rounded-2xl bg-slate-900/50 border border-slate-800 hover:border-indigo-500/30 transition-all duration-300">
-    <div className="p-3 mb-4 rounded-lg bg-slate-800 w-fit">
-      {icon}
-    </div>
-    <h3 className="text-xl font-bold mb-2 text-white">{title}</h3>
-    <p className="text-slate-400">{description}</p>
-  </div>
-);
+

@@ -4,7 +4,6 @@ import { useAuth0 } from '@auth0/auth0-react';
 import { Loader2, AlertCircle } from 'lucide-react';
 import { LandingPage } from './components/LandingPage';
 import { Dashboard } from './components/Dashboard';
-import { Layout } from './components/Layout';
 import { useLogoutSignalR } from './hooks/useLogoutSignalR';
 
 const App: React.FC = () => {
@@ -285,15 +284,13 @@ const App: React.FC = () => {
     };
   }, [isAuthenticated, isLoading, getAccessTokenSilently]);
 
+  // Auto attempt silent SSO when user visits and not authenticated
   useEffect(() => {
-    // Logic for Silent SSO:
-    // 1. User is not logged in.
-    // 2. We are not currently loading the Auth0 state.
-    // 3. We haven't already failed a silent attempt (prevents infinite loops).
-    // 4. We haven't just been redirected back with a result (?code= or ?error=).
-    if (!isLoading && !isAuthenticated && !isSilentAuthFailed && !hasAttemptedSilentAuth.current) {
+    // Only attempt if: not loading, not authenticated, not already attempted
+    if (!isLoading && !isAuthenticated && !hasAttemptedSilentAuth.current) {
       // Check logout timestamp before attempting silent login
       if (checkLogoutTimestamp()) {
+        hasAttemptedSilentAuth.current = true;
         return;
       }
 
@@ -301,26 +298,29 @@ const App: React.FC = () => {
       const hasCallbackParams = urlParams.has('error') || urlParams.has('code') || urlParams.has('state');
       const isCallbackRoute = window.location.pathname === '/callback' || window.location.pathname.endsWith('/callback');
 
-      // Only attempt silent auth if we're not on callback route and no callback params
-      if (!hasCallbackParams && !isCallbackRoute) {
-        console.log("🚀 SSO Handshake: Checking for existing session...");
-        hasAttemptedSilentAuth.current = true;
-        
-        loginWithRedirect({
-          authorizationParams: {
-            prompt: 'none', // Try to login in the background
-          },
-        }).catch(err => {
-          console.warn("Silent SSO skip:", err.message);
-          // Reset the flag on error so user can try again if needed
-          hasAttemptedSilentAuth.current = false;
-        });
-      } else if (hasCallbackParams && urlParams.get('error') === 'login_required') {
-        // Mark as attempted when we see login_required error to prevent loops
-        hasAttemptedSilentAuth.current = true;
+      // Skip if we're on callback route or have callback params (Auth0 is handling callback)
+      if (hasCallbackParams || isCallbackRoute) {
+        if (urlParams.get('error') === 'login_required') {
+          hasAttemptedSilentAuth.current = true;
+        }
+        return;
       }
+
+      // Attempt silent SSO - if Project A is logged in, Auth0 will automatically authenticate Project B
+      console.log("🚀 SSO Handshake: Checking for existing session...");
+      hasAttemptedSilentAuth.current = true;
+      
+      // Use loginWithRedirect with prompt: 'none' - if user is logged in Project A, 
+      // Auth0 will redirect back with authentication, otherwise with login_required error
+      loginWithRedirect({
+        authorizationParams: {
+          prompt: 'none', // Silent SSO - won't show login screen if already logged in
+        },
+      }).catch(() => {
+        // Error during redirect - landing page will show after redirect completes
+      });
     }
-  }, [isLoading, isAuthenticated, isSilentAuthFailed, loginWithRedirect]);
+  }, [isLoading, isAuthenticated, loginWithRedirect]);
 
   // Handle retry with cleanup for genuine errors
   const handleRetryConnection = () => {
@@ -365,7 +365,10 @@ const App: React.FC = () => {
     );
   }
 
-  // Show loading screen during auth handshake or when handling invalid state
+  // Show loading screen:
+  // 1. While Auth0 is loading/checking
+  // 2. While handling invalid state
+  // 3. While attempting silent SSO (before redirect or during redirect)
   if (isLoading || (isInvalidStateError && hasHandledInvalidState.current)) {
     return (
       <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center space-y-6">
@@ -383,11 +386,13 @@ const App: React.FC = () => {
     );
   }
 
+  // After loading completes and silent auth attempted:
+  // - If authenticated: show Dashboard
+  // - If not authenticated: show LandingPage (silent auth failed or not attempted)
   return (
-    <Layout>
-      {/* If auth successful (manual or silent), show Dashboard. Else Landing. */}
+    <div className="min-h-screen bg-slate-950 text-white">
       {isAuthenticated ? <Dashboard /> : <LandingPage />}
-    </Layout>
+    </div>
   );
 };
 
