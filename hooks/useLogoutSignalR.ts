@@ -44,6 +44,14 @@ export const useLogoutSignalR = () => {
     }
   };
 
+  // Store user sub in ref to avoid closure issues in event handlers
+  const userSubRef = useRef<string | undefined>(user?.sub);
+  
+  useEffect(() => {
+    // Update ref when user changes
+    userSubRef.current = user?.sub;
+  }, [user?.sub]);
+
   useEffect(() => {
     // Only connect if user is authenticated
     if (!isAuthenticated || !user?.sub) {
@@ -101,17 +109,25 @@ export const useLogoutSignalR = () => {
 
     // Set up event handlers BEFORE starting connection
     // Listen for logout event
+    // Note: Backend sends lowercase property names: userId, sessionId, logoutTime, message
     connection.on('UserLoggedOut', async (data: { 
-      UserId: string; 
-      SessionId?: string; 
-      LogoutTime: string;
-      Message?: string;
+      userId: string;  // lowercase from backend
+      sessionId?: string;
+      logoutTime: string;
+      message?: string;
     }) => {
       console.log('🔔 Logout event received:', data);
+      
+      // Get current user sub from ref to avoid closure issues
+      const currentUserSub = userSubRef.current;
+      console.log('🔍 Checking logout event - Event userId:', data.userId, 'Current user sub:', currentUserSub);
 
-      // Check if this logout is for current user
-      if (data.UserId === user?.sub) {
-        console.log('🚪 Current user logged out - logging out from frontend');
+      // Check if this logout is for current user (using lowercase userId from backend)
+      if (data.userId === currentUserSub) {
+        console.log('🚪 Current user logged out via SignalR - performing logout cleanup');
+
+        // Set logout timestamp to prevent relogin
+        localStorage.setItem('auth0_logout_timestamp', Date.now().toString());
 
         // Clear all Auth0 cache
         Object.keys(localStorage).forEach(key => {
@@ -124,7 +140,8 @@ export const useLogoutSignalR = () => {
 
         // Clear session storage
         Object.keys(sessionStorage).forEach(key => {
-          if (key.startsWith('ss_check_')) {
+          if (key.startsWith('ss_check_') || 
+              key.toLowerCase().includes('auth')) {
             sessionStorage.removeItem(key);
           }
         });
@@ -136,7 +153,8 @@ export const useLogoutSignalR = () => {
           console.error('Error stopping SignalR connection:', err);
         }
 
-        // Use Auth0 logout to clear session
+        // Use Auth0 logout to clear session - this will redirect to Auth0 logout endpoint
+        // and then back to the app (logged out)
         logout({
           logoutParams: {
             returnTo: window.location.origin
@@ -144,33 +162,40 @@ export const useLogoutSignalR = () => {
           localOnly: false
         });
       } else {
-        console.log('ℹ️ Logout event received for different user:', data.UserId);
+        console.log('ℹ️ Logout event received for different user:', data.userId, 'Current user:', currentUserSub);
       }
     });
 
     // Start connection
     connection.start()
       .then(() => {
-        console.log('✅ SignalR Connected to Logout Hub');
+        console.log('✅ SignalR Connected to Logout Hub - Connection ID:', connection.connectionId);
+        console.log('📡 SignalR State:', connection.state);
         
         // Join user-specific group with retry
         if (user.sub && connection.state === 'Connected') {
+          console.log('👤 Attempting to join logout group for user:', user.sub);
           joinGroupWithRetry(connection, user.sub, 0);
         } else {
-          console.warn('⚠️ Connection state is not Connected:', connection.state);
+          console.warn('⚠️ Connection state is not Connected:', connection.state, 'User:', user?.sub);
           // Try to join after a short delay
           setTimeout(() => {
             if (connection.state === 'Connected' && user.sub) {
+              console.log('🔄 Retrying group join after delay...');
               joinGroupWithRetry(connection, user.sub, 0);
+            } else {
+              console.warn('⚠️ Still not connected after delay. State:', connection.state);
             }
           }, 500);
         }
       })
       .catch(err => {
         console.error('❌ SignalR Connection Error:', err);
+        console.error('❌ Connection Error Details:', JSON.stringify(err, null, 2));
         // Retry connection after delay
         setTimeout(() => {
           if (isAuthenticated && user?.sub) {
+            console.log('🔄 Retrying SignalR connection...');
             connection.start()
               .then(() => {
                 console.log('✅ SignalR Reconnected after error');
